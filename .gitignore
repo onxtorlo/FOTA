@@ -1,3 +1,20 @@
 venv/
 __pycache__/
 *.pyc
+
+# STM32CubeIDE build outputs
+**/Debug/
+**/Release/
+**/build/
+
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.lst
+*.d
+*.su
+*.cyclo
