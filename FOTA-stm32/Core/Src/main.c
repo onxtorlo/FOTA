@@ -22,18 +22,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "suit_parser.h"
-#include <stdio.h>
+#include "manifest_fixture.h"
 
-#include "example1.h"
-#include "example2.h"
-#include "example3.h"
-#include "example4.h"
-#include "example5.h"
-#include "example6.h"
-#include "example7.h"
-#include "example8.h"
-#include "example9.h"
-#include "example10.h"
+#include <stdio.h>
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -73,8 +65,7 @@ static void MX_USART1_UART_Init(void);
 */
 int __io_putchar(int ch)
 {
-	extern UART_HandleTypeDef huart1; // STM32CubeMX가 만든 UART 핸들러 (기본값 huart1)
-	HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 0xFFFF);
+	HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
 	return ch;
 }
 /* USER CODE END 0 */
@@ -111,30 +102,64 @@ int main(void)
   MX_USART1_UART_Init();  // 시리얼 로그 출력용
 
   /* USER CODE BEGIN 2 */
-  printf("\r\n===== SUIT Manifest Parser Test Start =====\r\n");
+  /*
+   * Run the unmodified repository parser against the embedded fixture.
+   * This fixture is currently an intentionally unsigned, empty auth envelope.
+   */
+  printf("\r\n===== SUIT Parser Baseline =====\r\n");
+  printf("Fixture: empty authentication-list rejection test\r\n");
+  printf("Fixture length: %lu bytes\r\n",
+         (unsigned long)manifest_fixture_len);
 
-  /* -------------------------------------------------------------------------
-    [1차 가동 테스트]
-    example1.h 내부에 정의된 배열명과 길이 변수명을 그대로 사용합니다.
-    * xxd 자동 생성 규칙에 따라 변수명은 '파일명_확장자' 형식을 가집니다.
-    ------------------------------------------------------------------------- */
-  suit_parse_context_t ctx;
-  int8_t result;
+  int parse_rc = suit_do_process_manifest(manifest_fixture, manifest_fixture_len);
 
-  /* -------------------------------------------------------------------------
-    [1차 가동 테스트]
-    example1.h 내부에 정의된 배열명과 길이 변수명을 그대로 사용합니다.
-    * xxd 자동 생성 규칙에 따라 변수명은 '파일명_확장자' 형식을 가집니다.
-    ------------------------------------------------------------------------- */
-//  result = suit_do_process_manifest(&ctx, test_manifest, test_manifest_len);  // 원본
-  result = suit_do_process_manifest(example2_suit, example2_suit_len);
+  if (parse_rc == CBOR_ERR_NONE) {
+    printf("[parser] Accepted fixture\r\n");
+  } else {
+    const bm_cbor_err_info_t *err = bm_cbor_get_err_info();
+    const char *error_name = "unknown";
 
-  // 일반적으로 0 또는 특정 상수가 SUCCESS를 의미
-  if (result == 0) {
-	  printf("[+] Manifest parsing succeeded without panic.\r\n");
-  }
-  else {
-	  printf("[-] Parser returned error code: %d\r\n", result);
+    switch (parse_rc) {
+      case CBOR_ERR_TYPE_MISMATCH: error_name = "CBOR_ERR_TYPE_MISMATCH"; break;
+      case CBOR_ERR_KEY_MISMATCH: error_name = "CBOR_ERR_KEY_MISMATCH"; break;
+      case CBOR_ERR_OVERRUN: error_name = "CBOR_ERR_OVERRUN"; break;
+      case CBOR_ERR_INTEGER_DECODE_OVERFLOW: error_name = "CBOR_ERR_INTEGER_DECODE_OVERFLOW"; break;
+      case CBOR_ERR_INTEGER_ENCODING: error_name = "CBOR_ERR_INTEGER_ENCODING"; break;
+      case CBOR_ERR_UNIMPLEMENTED: error_name = "CBOR_ERR_UNIMPLEMENTED"; break;
+      case SUIT_ERR_VERSION: error_name = "SUIT_ERR_VERSION"; break;
+      case SUIT_ERR_SIG: error_name = "SUIT_ERR_SIG"; break;
+      case SUIT_ERROR_DIGEST_MISMATCH: error_name = "SUIT_ERROR_DIGEST_MISMATCH"; break;
+      case SUIT_MFST_ERR_AUTH_MISSING: error_name = "SUIT_MFST_ERR_AUTH_MISSING"; break;
+      case SUIT_MFST_ERR_MANIFEST_ENCODING: error_name = "SUIT_MFST_ERR_MANIFEST_ENCODING"; break;
+      case SUIT_MFST_UNSUPPORTED_ENTRY: error_name = "SUIT_MFST_UNSUPPORTED_ENTRY"; break;
+      case SUIT_MFST_CONDITION_FAILED: error_name = "SUIT_MFST_CONDITION_FAILED"; break;
+      case SUIT_MFST_UNSUPPORTED_COMMAND: error_name = "SUIT_MFST_UNSUPPORTED_COMMAND"; break;
+      case SUIT_MFST_UNSUPPORTED_ARGUMENT: error_name = "SUIT_MFST_UNSUPPORTED_ARGUMENT"; break;
+      case SUIT_MFST_ERR_VENDOR_MISMATCH: error_name = "SUIT_MFST_ERR_VENDOR_MISMATCH"; break;
+      case SUIT_MFST_ERR_CLASS_MISMATCH: error_name = "SUIT_MFST_ERR_CLASS_MISMATCH"; break;
+      case SUIT_ERR_PARAMETER_KEY: error_name = "SUIT_ERR_PARAMETER_KEY"; break;
+      default: break;
+    }
+
+    printf("[parser] Rejected fixture: %s (rc=%d)\r\n", error_name, parse_rc);
+    printf("[parser] Error source: %s:%lu\r\n",
+           err->file != NULL ? err->file : "<unknown>",
+           (unsigned long)err->line);
+
+    /*
+     * err->ptr may point one byte past the input when an empty or truncated
+     * CBOR container is rejected. Report that as the end offset.
+     */
+    if (err->ptr >= manifest_fixture &&
+        err->ptr <= manifest_fixture + manifest_fixture_len) {
+      printf("[parser] Manifest offset: %lu%s\r\n",
+             (unsigned long)(err->ptr - manifest_fixture),
+             err->ptr == manifest_fixture + manifest_fixture_len
+                 ? " (end of fixture)"
+                 : "");
+    } else {
+      printf("[parser] Manifest offset: unavailable\r\n");
+    }
   }
   /* USER CODE END 2 */
 
@@ -145,7 +170,10 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	// 테스트 완료 후 하트비트 표시를 위해 LED를 토글하거나 대기합니다.
+	/*
+	* 파서는 부팅 후 한 번만 실행
+	* 반복 파싱이 필요하면 보드 reset 또는 별도 UART 명령을 사용
+	*/
 	HAL_Delay(1000);
   }
   /* USER CODE END 3 */
@@ -268,13 +296,7 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
-
-  /* 파서 내부에서 오버플로우가 심하게 발생하여 스택이 오염되거나
-	 잘못된 플래시 주소를 참조(Out-of-bounds Read/Write)하는 경우,
-	 MCU는 하드웨어 덤프(HardFault_Handler)를 일으키거나 이곳으로 분기할 수 있습니다.
-  */
-  printf("\r\n[CRITICAL] System entered Error_Handler. Crash detected!\r\n");
-
+	printf("\r\n[critical] Error_Handler entered\r\n");
   __disable_irq();
   while (1)
   {
