@@ -8,8 +8,12 @@
 #include "main.h"
 #include "suit_parser.h"
 #include "suit_platform.h"
-#include <string.h> // memcpy, memcmp 용
-#include <stdio.h>  // printf 용
+#include <string.h>
+#include <stdio.h>
+
+#ifndef MBEDTLS_MD_SHA256
+#define MBEDTLS_MD_SHA256 4  // mbedTLS 규격의 SHA256 식별자 값 강제 정의
+#endif
 
 /* -------------------------------------------------------------------------
    [상수 및 변수 선언부]
@@ -145,31 +149,39 @@ int suit_platform_verify_digest(const uint8_t *data, size_t data_len,
 								const uint8_t *exp, size_t exp_len,
 								int alg)
 {
-	if (alg == SUIT_DIGEST_TYPE_SHA256) {
-		// 내부적으로 위에서 하드코딩한 해시 우회 함수 호출
-		return mbedtls_md_verify_helper256(data, data_len, exp, exp_len, 0);
-	}
-	return 1; // SUIT_ERROR_DIGEST_MISMATCH
+	// ----- 하드코딩 -----
+//	if (alg == SUIT_DIGEST_TYPE_SHA256) {
+//		// 내부적으로 위에서 하드코딩한 해시 우회 함수 호출
+//		return mbedtls_md_verify_helper256(data, data_len, exp, exp_len, 0);
+//	}
+//	return 1; // SUIT_ERROR_DIGEST_MISMATCH
 
-//    if (dry_run){  // 원본
-//        printf("Checking digest (alg=%d): ", alg);
-//    }
-//    switch (alg) {
-//        // TODO: expected digest length.
-//        case SUIT_DIGEST_TYPE_SHA256:
-//            if (dry_run) {
-//                printf("Matching SHA256: ");
-//                x_print(exp,exp_len);
-//                printf("\n");
-//                return CBOR_ERR_NONE;
-//            } else {
-//                printf("Matching SHA256: ");
-//                x_print(exp,exp_len);
-//                printf("\n");
-//                return mbedtls_md_verify_helper256(data, data_len, exp, exp_len, MBEDTLS_MD_SHA256);
-//            }
-//    }
-//    RETURN_ERROR(SUIT_ERROR_DIGEST_MISMATCH, NULL);
+    if (dry_run){  // 원본
+        printf("Checking digest (alg=%d): ", alg);
+    }
+    switch (alg) {
+        // TODO: expected digest length.
+        case SUIT_DIGEST_TYPE_SHA256:
+            if (dry_run) {
+                printf("Matching SHA256: ");
+                x_print(exp,exp_len);
+                printf("\n");
+                return CBOR_ERR_NONE;
+            } else {
+                printf("Matching SHA256: ");
+                x_print(exp,exp_len);
+                printf("\n");
+                return mbedtls_md_verify_helper256(data, data_len, exp, exp_len, MBEDTLS_MD_SHA256);
+            }
+    }
+    RETURN_ERROR(SUIT_ERROR_DIGEST_MISMATCH, NULL);
+}
+
+int suit_platform_get_image_ref(
+    suit_reference_t *component_id,
+    const uint8_t **image) {
+    //TODO: open/create component_id with mmap
+    return 0;
 }
 
 /* -------------------------------------------------------------------------

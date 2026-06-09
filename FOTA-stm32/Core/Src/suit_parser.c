@@ -106,7 +106,7 @@ static bm_cbor_value_t component_list;
 CBOR_KPARSE_ELEMENT_LIST(common_elements_component_list,
     CBOR_KPARSE_ELEMENT(SUIT_COMMON_DEPENDENCIES, CBOR_TYPE_LIST, NULL, "Dependencies"),
     CBOR_KPARSE_ELEMENT_EX(SUIT_COMMON_COMPONENTS, CBOR_TYPE_LIST, &component_list, "Components"),
-    CBOR_KPARSE_ELEMENT_C_BWRAP_KV(SUIT_COMMON_SEQUENCE, CBOR_TYPE_LIST, NULL, "common-sequence"),
+    CBOR_KPARSE_ELEMENT_C_BWRAP_KV(SUIT_COMMON_SEQUENCE, CBOR_TYPE_LIST, NULL, "common-sequence"),  // (수정) &sequence_elements
 
 );
 CBOR_KPARSE_ELEMENT_LIST(common_entry_elements_component_list,
@@ -378,23 +378,31 @@ PARSE_HANDLER(image_match_handler)
     // int rc = suit_get_parameters(values, parameters, cbor_types, sctx);
 
     suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
-    uint64_t image_size;
+    volatile uint64_t image_size;  // 이미지 사이즈 변수 선언, volatile
     suit_reference_t *sz;
     suit_reference_t component_id;
     int rc = key_to_reference(SUIT_PARAMETER_IMAGE_SIZE, &sz, ctx);
     const uint8_t *np = sz->ptr;
+
+    printf("[*] PARSE_HANDLER(image_match_handler) called.\r\n");
 
     // manifest binary stream에서 펌웨어 이미지 크기 추출, image_size에 저장
     rc = rc ? rc : bm_cbor_get_uint(&np, sz->end, &image_size);
 
     // ============= [정수 오버플로우 취약점 모의 구현 패치] =============
     image_size = 18446744073709551610ULL; // (2^64 - 6) 값 주입
+    printf("[*] Input image_size = %lu\r\n", image_size);
 
     rc = rc ? rc : suit_get_current_component_id(&component_id, sctx);
+    printf("[*] rc = suit_get_current_component_id = %d\r\n", rc);
+
     const uint8_t *image;
     rc = rc ? rc : suit_platform_get_image_ref(&component_id, &image);
+    printf("[*] rc = suit_platform_get_image_ref = %d\r\n", rc);
+
     suit_reference_t *exp;
     rc = rc ? rc : key_to_reference(SUIT_PARAMETER_IMAGE_DIGEST, &exp, ctx);
+    printf("[*] rc = suit_platform_get_image_ref = %d\r\n", rc);
 
     // image_size를 인자로, 플래시 메모리 영역(image)의 해시값을 계산/비교 함수(suit_check_digest) 호출
     rc = rc ? rc : suit_check_digest(exp, image, image_size);
@@ -421,6 +429,7 @@ PARSE_HANDLER(parameter_handler) {
     *p = val->cbor_start;
     return bm_cbor_skip(p, end);
 }
+
 //TODO: This could be optimised: each parameter uses same handler, so this structure is too big
 CBOR_KPARSE_ELEMENT_LIST(parameter_handlers,
     CBOR_KPARSE_ELEMENT_H(SUIT_PARAMETER_VENDOR_ID, CBOR_TYPE_BSTR, parameter_handler, "vendor-id"),
@@ -479,7 +488,7 @@ PARSE_HANDLER(invoke_handler)
 CBOR_KPARSE_ELEMENT_LIST(sequence_elements,
     CBOR_KPARSE_ELEMENT_H(SUIT_CONDITION_VENDOR_ID, CBOR_TYPE_UINT, vendor_match_handler, "vendor-match"),
     CBOR_KPARSE_ELEMENT_H(SUIT_CONDITION_CLASS_ID, CBOR_TYPE_UINT, class_match_handler, "class-match"),
-    CBOR_KPARSE_ELEMENT_H(SUIT_CONDITION_IMAGE_MATCH, CBOR_TYPE_UINT, NULL, "image-match"), // TODO: review this
+    CBOR_KPARSE_ELEMENT_H(SUIT_CONDITION_IMAGE_MATCH, CBOR_TYPE_UINT, image_match_handler, "image-match"), // TODO: review this
     // CBOR_KPARSE_ELEMENT(SUIT_DIRECTIVE_SET_COMP_IDX, CBOR_TYPE_UINT, set_component_handler),
     CBOR_KPARSE_ELEMENT_C(SUIT_DIRECTIVE_SET_PARAMETERS, CBOR_TYPE_MAP, &parameter_handlers, "set-parameters"),
     CBOR_KPARSE_ELEMENT_C(SUIT_DIRECTIVE_OVERRIDE_PARAMETERS, CBOR_TYPE_MAP, &parameter_handlers, "override-parameters"),
@@ -727,7 +736,7 @@ PARSE_HANDLER(cert_manifest_handler) {
 
 CBOR_KPARSE_ELEMENT_LIST(manifest_elements,
     CBOR_KPARSE_ELEMENT_H(SUIT_MANIFEST_VERSION, CBOR_TYPE_UINT, version_handler, "SUIT Structure Version"),
-    CBOR_KPARSE_ELEMENT_H(SUIT_MANIFEST_SEQUCENCE_NUMBER, CBOR_TYPE_UINT, NULL, "SUIT Sequence Number"),
+    CBOR_KPARSE_ELEMENT_H(SUIT_MANIFEST_SEQUCENCE_NUMBER, CBOR_TYPE_UINT, NULL, "SUIT Sequence Number"),  // (수정) vs_seq_num_handler
     CBOR_KPARSE_ELEMENT_H(SUIT_MANIFEST_COMMON, CBOR_TYPE_BSTR, suit_common_handler, "SUIT Common"),
     CBOR_KPARSE_ELEMENT_H_BWRAP(SUIT_MANIFEST_INSTALL, CBOR_TYPE_LIST, &suit_sequence_handler, "Install sequence"),
     CBOR_KPARSE_ELEMENT_H_BWRAP(SUIT_MANIFEST_VALIDATE, CBOR_TYPE_LIST, &suit_sequence_handler, "Validate sequence"),
@@ -770,7 +779,6 @@ CBOR_KPARSE_ELEMENT_LIST(tag_or_envelope,
     CBOR_KPARSE_ELEMENT_C(0, CBOR_TYPE_TAG, &outer_tag_elements, "Outer Tag"),
 );
 
-
 int suit_do_process_manifest(const uint8_t *manifest, size_t manifest_size) {
     suit_parse_context_t sctx = {0};
     sctx.envelope.ptr = manifest;
@@ -781,6 +789,12 @@ int suit_do_process_manifest(const uint8_t *manifest, size_t manifest_size) {
     // int rc = pull_cbor_process_kv(
     //     &p, end, &sctx, &envelope_handlers.elements, CBOR_TYPE_MAP
     // );
+
+    // rc 값에 상관없이 무조건 image_match_handler를 호출
+    // 앞의 3개 인자는 정상 전달, 뒤쪽 타입이 꼬이는 인자들은 NULL로 전달
+    image_match_handler(&p, end, &sctx, NULL, 0, NULL);
+    printf("[*] suit_do_process_manifest() return: rc = %d \r\n", rc);
+
     return rc;
 }
 

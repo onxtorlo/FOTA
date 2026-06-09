@@ -111,7 +111,7 @@ int main(void)
   MX_USART1_UART_Init();  // 시리얼 로그 출력용
 
   /* USER CODE BEGIN 2 */
-  printf("\r\n=== SUIT Manifest Parser Test Start ===\r\n");
+  printf("\r\n===== SUIT Manifest Parser Test Start =====\r\n");
 
   /* -------------------------------------------------------------------------
     [1차 가동 테스트]
