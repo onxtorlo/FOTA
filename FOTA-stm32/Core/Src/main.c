@@ -23,6 +23,14 @@
 /* USER CODE BEGIN Includes */
 #include "suit_parser.h"
 #include "manifest_fixture.h"
+#include "manifest_fixture11.h"
+#include "manifest_fixture12.h"
+#include "manifest_fixture13.h"
+#include "manifest_fixture14.h"
+#include "manifest_fixture15.h"
+#include "manifest_fixture16.h"
+#include "manifest_fixture17.h"
+#include "manifest_fixture18.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -60,12 +68,78 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+typedef struct {
+  const char *name;
+  const uint8_t *data;
+  size_t len;
+  int expected_rc;
+} parser_test_case_t;
+
+static const char *parser_error_name(int rc)
+{
+  switch (rc) {
+    case CBOR_ERR_NONE: return "CBOR_ERR_NONE";
+    case CBOR_ERR_TYPE_MISMATCH: return "CBOR_ERR_TYPE_MISMATCH";
+    case CBOR_ERR_KEY_MISMATCH: return "CBOR_ERR_KEY_MISMATCH";
+    case CBOR_ERR_OVERRUN: return "CBOR_ERR_OVERRUN";
+    case CBOR_ERR_INTEGER_DECODE_OVERFLOW: return "CBOR_ERR_INTEGER_DECODE_OVERFLOW";
+    case CBOR_ERR_INTEGER_ENCODING: return "CBOR_ERR_INTEGER_ENCODING";
+    case CBOR_ERR_UNIMPLEMENTED: return "CBOR_ERR_UNIMPLEMENTED";
+    case SUIT_ERR_VERSION: return "SUIT_ERR_VERSION";
+    case SUIT_ERR_SIG: return "SUIT_ERR_SIG";
+    case SUIT_ERROR_DIGEST_MISMATCH: return "SUIT_ERROR_DIGEST_MISMATCH";
+    case SUIT_MFST_ERR_AUTH_MISSING: return "SUIT_MFST_ERR_AUTH_MISSING";
+    case SUIT_MFST_ERR_MANIFEST_ENCODING: return "SUIT_MFST_ERR_MANIFEST_ENCODING";
+    case SUIT_MFST_UNSUPPORTED_ENTRY: return "SUIT_MFST_UNSUPPORTED_ENTRY";
+    case SUIT_MFST_CONDITION_FAILED: return "SUIT_MFST_CONDITION_FAILED";
+    case SUIT_MFST_UNSUPPORTED_COMMAND: return "SUIT_MFST_UNSUPPORTED_COMMAND";
+    case SUIT_MFST_UNSUPPORTED_ARGUMENT: return "SUIT_MFST_UNSUPPORTED_ARGUMENT";
+    case SUIT_MFST_ERR_VENDOR_MISMATCH: return "SUIT_MFST_ERR_VENDOR_MISMATCH";
+    case SUIT_MFST_ERR_CLASS_MISMATCH: return "SUIT_MFST_ERR_CLASS_MISMATCH";
+    case SUIT_ERR_PARAMETER_KEY: return "SUIT_ERR_PARAMETER_KEY";
+    case SUIT_ERR_IMAGE_SIZE: return "SUIT_ERR_IMAGE_SIZE";
+    default: return "unknown";
+  }
+}
+
+static void run_parser_test(const parser_test_case_t *test)
+{
+  int rc = suit_do_process_manifest(test->data, test->len);
+  const bm_cbor_err_info_t *err = bm_cbor_get_err_info();
+
+  printf("\r\n[test] %s (%lu bytes)\r\n", test->name, (unsigned long)test->len);
+  printf("[parser] %s: %s (rc=%d, expected=%d)\r\n",
+         rc == test->expected_rc ? "PASS" : "FAIL",
+         parser_error_name(rc), rc, test->expected_rc);
+
+  if (rc != CBOR_ERR_NONE) {
+    printf("[parser] Error source: %s:%lu\r\n",
+           err->file != NULL ? err->file : "<input validation>",
+           (unsigned long)err->line);
+    if (err->ptr != NULL && test->data != NULL &&
+        err->ptr >= test->data && err->ptr <= test->data + test->len) {
+      printf("[parser] Manifest offset: %lu%s\r\n",
+             (unsigned long)(err->ptr - test->data),
+             err->ptr == test->data + test->len ? " (end of fixture)" : "");
+    }
+  }
+}
+
 /*
   @brief  printf 함수 출력을 USART1로 리다이렉션해 시리얼 모니터로 디버깅 로그를 확인
 */
 int __io_putchar(int ch)
 {
-	HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+//	HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+
+	if (ch == '\n') {
+		const uint8_t cr = '\r';
+		HAL_UART_Transmit(&huart1, &cr, 1, HAL_MAX_DELAY);
+	}
+
+	const uint8_t byte = (uint8_t)ch;
+	HAL_UART_Transmit(&huart1, &byte, 1, HAL_MAX_DELAY);
+
 	return ch;
 }
 /* USER CODE END 0 */
@@ -102,64 +176,66 @@ int main(void)
   MX_USART1_UART_Init();  // 시리얼 로그 출력용
 
   /* USER CODE BEGIN 2 */
-  /*
-   * Run the unmodified repository parser against the embedded fixture.
-   * This fixture is currently an intentionally unsigned, empty auth envelope.
-   */
-  printf("\r\n===== SUIT Parser Baseline =====\r\n");
-  printf("Fixture: empty authentication-list rejection test\r\n");
-  printf("Fixture length: %lu bytes\r\n",
-         (unsigned long)manifest_fixture_len);
+  const parser_test_case_t tests[] = {
+	  {
+		  "example1",
+		  manifest_fixture,
+		  manifest_fixture_len,
+		  CBOR_ERR_NONE  //  파서가 실제로 반환할 것으로 예상하는 결과값
+	  },
+      {
+          "example11: 2^32-2",
+          manifest_fixture11,
+          manifest_fixture11_len,
+          SUIT_ERR_IMAGE_SIZE
+      },
+      {
+          "example12: 2^32-1",
+          manifest_fixture12,
+          manifest_fixture12_len,
+          SUIT_ERR_IMAGE_SIZE
+      },
+      {
+          "example13: 2^32",
+          manifest_fixture13,
+          manifest_fixture13_len,
+          SUIT_ERR_IMAGE_SIZE
+      },
+      {
+          "example14: 2^32+1",
+          manifest_fixture14,
+          manifest_fixture14_len,
+          SUIT_ERR_IMAGE_SIZE
+      },
+      {
+          "example15: 2^32+4095",
+          manifest_fixture15,
+          manifest_fixture15_len,
+          SUIT_ERR_IMAGE_SIZE
+      },
+      {
+          "example16: 2^32+4096",
+          manifest_fixture16,
+          manifest_fixture16_len,
+          SUIT_ERR_IMAGE_SIZE
+      },
+      {
+          "example17: 2^32+34768",
+          manifest_fixture17,
+          manifest_fixture17_len,
+          SUIT_ERR_IMAGE_SIZE
+      },
+      {
+          "example18: 2^33",
+          manifest_fixture18,
+          manifest_fixture18_len,
+          SUIT_ERR_IMAGE_SIZE
+      },
+  };
 
-  int parse_rc = suit_do_process_manifest(manifest_fixture, manifest_fixture_len);
-
-  if (parse_rc == CBOR_ERR_NONE) {
-    printf("[parser] Accepted fixture\r\n");
-  } else {
-    const bm_cbor_err_info_t *err = bm_cbor_get_err_info();
-    const char *error_name = "unknown";
-
-    switch (parse_rc) {
-      case CBOR_ERR_TYPE_MISMATCH: error_name = "CBOR_ERR_TYPE_MISMATCH"; break;
-      case CBOR_ERR_KEY_MISMATCH: error_name = "CBOR_ERR_KEY_MISMATCH"; break;
-      case CBOR_ERR_OVERRUN: error_name = "CBOR_ERR_OVERRUN"; break;
-      case CBOR_ERR_INTEGER_DECODE_OVERFLOW: error_name = "CBOR_ERR_INTEGER_DECODE_OVERFLOW"; break;
-      case CBOR_ERR_INTEGER_ENCODING: error_name = "CBOR_ERR_INTEGER_ENCODING"; break;
-      case CBOR_ERR_UNIMPLEMENTED: error_name = "CBOR_ERR_UNIMPLEMENTED"; break;
-      case SUIT_ERR_VERSION: error_name = "SUIT_ERR_VERSION"; break;
-      case SUIT_ERR_SIG: error_name = "SUIT_ERR_SIG"; break;
-      case SUIT_ERROR_DIGEST_MISMATCH: error_name = "SUIT_ERROR_DIGEST_MISMATCH"; break;
-      case SUIT_MFST_ERR_AUTH_MISSING: error_name = "SUIT_MFST_ERR_AUTH_MISSING"; break;
-      case SUIT_MFST_ERR_MANIFEST_ENCODING: error_name = "SUIT_MFST_ERR_MANIFEST_ENCODING"; break;
-      case SUIT_MFST_UNSUPPORTED_ENTRY: error_name = "SUIT_MFST_UNSUPPORTED_ENTRY"; break;
-      case SUIT_MFST_CONDITION_FAILED: error_name = "SUIT_MFST_CONDITION_FAILED"; break;
-      case SUIT_MFST_UNSUPPORTED_COMMAND: error_name = "SUIT_MFST_UNSUPPORTED_COMMAND"; break;
-      case SUIT_MFST_UNSUPPORTED_ARGUMENT: error_name = "SUIT_MFST_UNSUPPORTED_ARGUMENT"; break;
-      case SUIT_MFST_ERR_VENDOR_MISMATCH: error_name = "SUIT_MFST_ERR_VENDOR_MISMATCH"; break;
-      case SUIT_MFST_ERR_CLASS_MISMATCH: error_name = "SUIT_MFST_ERR_CLASS_MISMATCH"; break;
-      case SUIT_ERR_PARAMETER_KEY: error_name = "SUIT_ERR_PARAMETER_KEY"; break;
-      default: break;
-    }
-
-    printf("[parser] Rejected fixture: %s (rc=%d)\r\n", error_name, parse_rc);
-    printf("[parser] Error source: %s:%lu\r\n",
-           err->file != NULL ? err->file : "<unknown>",
-           (unsigned long)err->line);
-
-    /*
-     * err->ptr may point one byte past the input when an empty or truncated
-     * CBOR container is rejected. Report that as the end offset.
-     */
-    if (err->ptr >= manifest_fixture &&
-        err->ptr <= manifest_fixture + manifest_fixture_len) {
-      printf("[parser] Manifest offset: %lu%s\r\n",
-             (unsigned long)(err->ptr - manifest_fixture),
-             err->ptr == manifest_fixture + manifest_fixture_len
-                 ? " (end of fixture)"
-                 : "");
-    } else {
-      printf("[parser] Manifest offset: unavailable\r\n");
-    }
+  printf("\r\n===== SUIT Parser STM32 Valid Manifest Baseline =====\r\n");
+  for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
+    run_parser_test(&tests[i]);
   }
   /* USER CODE END 2 */
 

@@ -16,6 +16,7 @@
 // limitations under the License.
 // ----------------------------------------------------------------------------
 #include "suit_platform.h"
+#include "suit_platform_stm32.h"
 #include "suit_parser.h"
 #include "pull_cbor.h"
 #include "bm_cbor.h"
@@ -156,7 +157,10 @@ int Signature1_val_cat(suit_parse_context_t* ctx, bm_cbor_value_t *val) {
 }
 int Signature1_ref_cat(suit_parse_context_t* ctx, suit_reference_t *ref) {
     const uint8_t *p = ref->ptr;
-    int rc = bm_cbor_skip(&p, ref->end);    
+    int rc = bm_cbor_skip(&p, ref->end);
+    if (rc != CBOR_ERR_NONE) {
+        return rc;
+    }
     size_t clen = (p - ref->ptr);
     if (ctx->Sign1.offset + clen > sizeof(ctx->Sign1.Signature1)) {
         RETURN_ERROR(SUIT_ERR_SIG, ref->ptr);
@@ -218,7 +222,6 @@ CBOR_KPARSE_ELEMENT_LIST(cose_sign1_protected,
 );
 
 PARSE_HANDLER(cose_sign1_protected_handler) {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
     int rc = Signature1_val_cat(ctx, val);
     if (rc != CBOR_ERR_NONE) {
         return rc;
@@ -276,7 +279,6 @@ PARSE_HANDLER(auth_list_handler)
 
 PARSE_HANDLER(version_handler)
 {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
     if (val->u != SUIT_SUPPORTED_VERSION) {
         RETURN_ERROR(SUIT_ERR_VERSION, *p);
     }
@@ -384,6 +386,11 @@ PARSE_HANDLER(image_match_handler)
     int rc = key_to_reference(SUIT_PARAMETER_IMAGE_SIZE, &sz, ctx);
     const uint8_t *np = sz->ptr;
     rc = rc ? rc : bm_cbor_get_uint(&np, sz->end, &image_size);
+    if (rc == CBOR_ERR_NONE) {
+        printf("[trace] image-match image_size(u64)=%llu, size_t=%lu\r\n",
+               (unsigned long long)image_size,
+               (unsigned long)(size_t)image_size);
+    }
     rc = rc ? rc : suit_get_current_component_id(&component_id, sctx);
     const uint8_t *image;
     rc = rc ? rc : suit_platform_get_image_ref(&component_id, &image);
@@ -398,8 +405,17 @@ PARSE_HANDLER(image_match_handler)
 
 //TODO: multiple components
 PARSE_HANDLER(parameter_handler) {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
     suit_reference_t *ref;
+
+    // 최초 파싱 시 이미지 크기 검증 추가
+    if (key == SUIT_PARAMETER_IMAGE_SIZE) {
+        if (val->u == 0 ||
+            val->u > (bm_cbor_uint_t)SIZE_MAX ||
+            val->u > (bm_cbor_uint_t)SUIT_MAX_IMAGE_SIZE) {
+            RETURN_ERROR(SUIT_ERR_IMAGE_SIZE, val->cbor_start);
+        }
+    }
+
     int rc = key_to_reference(key, &ref, ctx);
     if (rc != CBOR_ERR_NONE) {
         bm_cbor_get_err_info()->ptr = *p;
@@ -450,7 +466,20 @@ PARSE_HANDLER(image_fetch_handler)
     if (rc != CBOR_ERR_NONE) {
         return rc;
     }
-    rc = suit_platform_do_fetch(&component_id, digest_alg.i, digest_bytes.ref.ptr, digest_bytes.ref.uival, size.u, uri.ref.ptr, uri.ref.uival);
+
+    // size.u -> size_t 타입 변환 검사
+    if (size.u == 0 ||
+        size.u > (bm_cbor_uint_t)SIZE_MAX ||
+        size.u > (bm_cbor_uint_t)SUIT_MAX_IMAGE_SIZE) {
+        RETURN_ERROR(SUIT_ERR_IMAGE_SIZE, *p);
+    }
+
+    printf("[trace] image-fetch image_size(u64)=%llu, size_t=%lu\r\n",
+           (unsigned long long)size.u,
+           (unsigned long)(size_t)size.u);
+    rc = suit_platform_do_fetch(&component_id, digest_alg.i, digest_bytes.ref.ptr,
+                                digest_bytes.ref.uival, (size_t)size.u,
+                                uri.ref.ptr, uri.ref.uival);
     if (rc != CBOR_ERR_NONE) {
         bm_cbor_get_err_info()->ptr = *p;
     }
@@ -506,7 +535,6 @@ PARSE_HANDLER(suit_sequence_handler) {
 
 // Text entry handler
 PARSE_HANDLER(text_handler) {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
     // Verify it's a list with algorithm and digest bytes
     if (val->ref.uival != 2) { // Should have 2 elements: algorithm-id and digest-bytes
         bm_cbor_get_err_info()->ptr = *p;
@@ -576,10 +604,13 @@ PARSE_HANDLER(cert_man_language_handler) {
 }
 
 PARSE_HANDLER(cert_man_proof_cert_handler) {
-    printf("Proof Certificate: ");
-    for(size_t i = 0; i < val->ref.uival; i++) {
-        printf("%c", val->ref.ptr[i]);
-    }
+//    printf("Proof Certificate: ");
+//    for(size_t i = 0; i < val->ref.uival; i++) {
+//        printf("%c", val->ref.ptr[i]);
+//    }
+
+	printf("Proof Certificate: [omitted, %lu bytes]\n", (unsigned long)val->ref.uival);
+
     *p = val->ref.ptr + val->ref.uival;
     printf("\n");
     return 0;
@@ -622,8 +653,6 @@ PARSE_HANDLER(cert_man_component_handler) {
 PARSE_HANDLER(cert_man_verification_servers_handler) {
     // Get the list item count to parse through
     const uint8_t *ptr = val->ref.ptr;
-    const uint8_t *end_ptr = val->ref.ptr + val->ref.uival;
-    
     //printf("ptr: %p, end: %p\n", ptr, end_ptr);
 
     // Parse each map in the list
@@ -683,8 +712,6 @@ CBOR_KPARSE_ELEMENT_LIST(cert_manifest_elements,
 
 
 PARSE_HANDLER(cert_manifest_handler) {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
-
     const uint8_t list_size = val->ref.uival;
     printf("Number of certification manifest entry: %lu\n", (unsigned long)list_size);
     
@@ -764,6 +791,18 @@ CBOR_KPARSE_ELEMENT_LIST(tag_or_envelope,
 
 
 int suit_do_process_manifest(const uint8_t *manifest, size_t manifest_size) {
+    bm_cbor_err_info_t *err = bm_cbor_get_err_info();
+    err->ptr = manifest;
+    err->cbor_err = CBOR_ERR_NONE;
+#if BM_CBOR_ERR_INFO_DGB != 0
+    err->line = 0;
+    err->file = NULL;
+#endif
+
+    if (manifest == NULL || manifest_size == 0) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, manifest);
+    }
+
     suit_parse_context_t sctx = {0};
     sctx.envelope.ptr = manifest;
     sctx.envelope.end = manifest + manifest_size;

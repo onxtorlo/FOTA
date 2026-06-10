@@ -20,20 +20,6 @@
 #define _PULL_CBOR_H_
 
 #include <stddef.h>
-// #define FLEXARRAY_HELPER(STRUCT_TYPE, TYPE, NAME, TMPNAME, ...)\
-//     const TYPE TMPNAME [] = { \
-//         __VA_ARGS__\
-//     };\
-//     union {\
-//         const STRUCT_TYPE elements;\
-//         const uint8_t raw [sizeof(TMPNAME) + sizeof(STRUCT_TYPE)];\
-//     } NAME = {{.count = ARRAY_SIZE(TMPNAME), elements={ \
-//         __VA_ARGS__\
-//     }}}
-// #define FLEXARRAY(STRUCT_TYPE, TYPE, NAME, ...) FLEXARRAY_HELPER(STRUCT_TYPE, TYPE, NAME, _flexarray_ ## NAME ## _tmp, __VA_ARGS__)
-// #define CBOR_KPARSE_ELEMENT_LIST(NAME, ...) \
-//     FLEXARRAY(cbor_keyed_parse_elements_t, cbor_keyed_parse_element_t, NAME, __VA_ARGS__)
-
 #ifdef PARSER_DEBUG
 #define CBOR_KPARSE_ELEMENT_C_BWRAP_KV(KEY, TYPE, CHILDREN, DESC)\
     {.key = (KEY), 0, .type = (TYPE) >> 5, .is_kv = 1, .bstr_wrap = 1, 0, 0, 0, .ptr = (CHILDREN), .desc=(DESC)}

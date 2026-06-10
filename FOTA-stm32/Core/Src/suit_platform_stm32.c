@@ -47,11 +47,11 @@ static int parser_lab_bypass(const char *check_name)
 #endif
 }
 
-int COSEAuthVerify(
-    const uint8_t *msg, size_t msg_len,
-    const uint8_t *sig, size_t sig_len,
-    const uint8_t *kid, size_t kid_len,
-    int alg)
+// 서명 검증
+int COSEAuthVerify(const uint8_t *msg, size_t msg_len,
+				   const uint8_t *sig, size_t sig_len,
+				   const uint8_t *kid, size_t kid_len,
+				   int alg)
 {
     (void)msg;
     (void)msg_len;
@@ -71,10 +71,11 @@ int suit_platform_verify_digest(
     int alg)
 {
     (void)data;
-    (void)data_len;
     (void)exp;
     (void)exp_len;
     (void)alg;
+
+    printf("[trace] digest data_len(size_t)=%lu\r\n", (unsigned long)data_len);
 
     /* CHECK: Bypasses manifest/image SHA-256 verification only. */
     return parser_lab_bypass("manifest/image digest verification");
@@ -109,13 +110,18 @@ int suit_platform_do_fetch(
     const uint8_t *uri,
     size_t uri_len)
 {
+    if (image_size == 0 || image_size > (size_t)SUIT_MAX_IMAGE_SIZE) {
+        return SUIT_ERR_IMAGE_SIZE;
+    }
+
     (void)component_id;
     (void)digest_type;
     (void)digest_bytes;
     (void)digest_len;
-    (void)image_size;
     (void)uri;
     (void)uri_len;
+
+    printf("[trace] fetch image_size(size_t)=%lu\r\n", (unsigned long)image_size);
 
     /*
      * CHECK: No network or Flash write occurs. Success lets parser research

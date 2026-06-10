@@ -23,5 +23,10 @@
  * treated as a real firmware image.
  */
 #define SUIT_PARSER_LAB_IMAGE_SIZE ((size_t)4096u)
+/*
+ * Temporary parser-lab policy limit.
+ * Replace with the actual update-slot size when FOTA storage is implemented.
+ */
+#define SUIT_MAX_IMAGE_SIZE ((uint64_t)(896u * 1024u))
 
 #endif /* SUIT_PLATFORM_STM32_H */

@@ -76,7 +76,8 @@ static int get_handler(
             return CBOR_ERR_NONE;
         }
     } // while (++i < handlers->count && (*h)->key == key);
-    printf("Type Mismatch for key: %d with type %d\n", key, ((cbor_b1 & CBOR_TYPE_MASK) >> 5));
+    printf("Type Mismatch for key: %ld with type %d\n",
+           (long)key, ((cbor_b1 & CBOR_TYPE_MASK) >> 5));
     RETURN_ERROR(CBOR_ERR_TYPE_MISMATCH, NULL);
 }
 
@@ -94,6 +95,9 @@ int pull_cbor_handle_keyed_element(
     const cbor_keyed_parse_elements_t *handlers,
     int32_t key
 ) {
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
+    }
 
     // TODO: Add pre-call-function?
     // printf("parse offset: %zu, key: %" PRIi64 "\n", (size_t)((*p)-ctx->envelope.ptr), key);
@@ -108,7 +112,10 @@ int pull_cbor_handle_keyed_element(
         return rc;
     }
     // printf("Extract done\r\n");
-    uint8_t cbor_sub = **p;
+    uint8_t cbor_sub = 0;
+    if (*p < end) {
+        cbor_sub = **p;
+    }
 
     const cbor_keyed_parse_element_t *handler;
     //printf("Key: %d\n", key);
@@ -121,6 +128,11 @@ int pull_cbor_handle_keyed_element(
 
     uint8_t cbor_type = cbor_b1 & CBOR_TYPE_MASK;
     if (handler->bstr_wrap) {
+        if ((cbor_b1 & CBOR_TYPE_MASK) != CBOR_TYPE_BSTR ||
+            val.ref.ptr > end ||
+            val.ref.uival > (bm_cbor_uint_t)(end - val.ref.ptr)) {
+            RETURN_ERROR(CBOR_ERR_OVERRUN, val.ref.ptr);
+        }
         // printf("parse offset: %zu. Unwrapping BSTR\n", (size_t)((*p)-ctx->envelope.ptr));
         //printf("Unwrapping BSTR\n");
         val.cbor_start =  *p;
@@ -284,6 +296,9 @@ int pull_cbor_process_kv(
     const cbor_keyed_parse_elements_t *handlers,
     const uint8_t type
 ) {
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
+    }
     // Ensure that the wrapper is a map.
     if ((**p & CBOR_TYPE_MASK) != type) {
         //printf("Expected: %u Actual %u\n", (unsigned)type >> 5, (unsigned)(**p & CBOR_TYPE_MASK) >> 5);
