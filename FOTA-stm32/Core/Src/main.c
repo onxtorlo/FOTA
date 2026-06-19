@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "suit_parser.h"
+
 #include "manifest_fixture.h"
 #include "manifest_fixture11.h"
 #include "manifest_fixture12.h"
@@ -34,6 +35,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -126,6 +128,7 @@ static void run_parser_test(const parser_test_case_t *test)
 }
 
 /*
+
   @brief  printf 함수 출력을 USART1로 리다이렉션해 시리얼 모니터로 디버깅 로그를 확인
 */
 int __io_putchar(int ch)
@@ -139,6 +142,7 @@ int __io_putchar(int ch)
 
 	const uint8_t byte = (uint8_t)ch;
 	HAL_UART_Transmit(&huart1, &byte, 1, HAL_MAX_DELAY);
+
 
 	return ch;
 }

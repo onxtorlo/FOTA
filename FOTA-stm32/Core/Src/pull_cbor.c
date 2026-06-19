@@ -26,7 +26,6 @@
 #include <stdio.h>
 
 // TODO: Further unit tests for units below this line
-//===================================================
 
 static int get_handler(
     const uint8_t cbor_b1,
