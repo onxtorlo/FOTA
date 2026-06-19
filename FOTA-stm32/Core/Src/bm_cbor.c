@@ -26,8 +26,8 @@ bm_cbor_err_info_t bm_cbor_err_info = {0};
 
 int bm_cbor_get_as_uint(const uint8_t** p, const uint8_t* end, bm_cbor_uint_t* n)
 {
-    if (*p >= end) {
-        RETURN_ERROR(CBOR_ERR_OVERRUN, *p);
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
     }
     uint8_t iv = **p & ~CBOR_TYPE_MASK;
     if (iv >= 28){
@@ -39,11 +39,12 @@ int bm_cbor_get_as_uint(const uint8_t** p, const uint8_t* end, bm_cbor_uint_t* n
     if (iv < 24) {
         *n = iv;
     } else {
-        const uint8_t* uend = *p + (1 << (iv-24));
-        if (uend > end) {
+        size_t encoded_size = (size_t)1u << (iv - 24);
+        if (encoded_size > (size_t)(end - *p)) {
             --(*p);
             RETURN_ERROR(CBOR_ERR_OVERRUN, *p);
         }
+        const uint8_t* uend = *p + encoded_size;
         for (*n = 0; *p < uend; (*p)++) {
             *n = *n << 8 | **p;
         }
@@ -52,6 +53,9 @@ int bm_cbor_get_as_uint(const uint8_t** p, const uint8_t* end, bm_cbor_uint_t* n
 }
 
 int bm_cbor_get_uint(const uint8_t** p, const uint8_t* end, bm_cbor_uint_t* n){
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
+    }
     uint8_t type = **p & CBOR_TYPE_MASK;
     if (type != CBOR_TYPE_UINT) {
         RETURN_ERROR(CBOR_ERR_TYPE_MISMATCH, *p);
@@ -60,6 +64,9 @@ int bm_cbor_get_uint(const uint8_t** p, const uint8_t* end, bm_cbor_uint_t* n){
 }
 
 int bm_cbor_get_int(const uint8_t** p, const uint8_t* end, bm_cbor_int_t* n) {
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
+    }
     uint8_t type = **p & CBOR_TYPE_MASK;
     if (type != CBOR_TYPE_NINT && type != CBOR_TYPE_UINT) {
         //printf("Type mismatch: given type is %d - expected is %d or %d\n", type, CBOR_TYPE_NINT, CBOR_TYPE_UINT);
@@ -70,7 +77,7 @@ int bm_cbor_get_int(const uint8_t** p, const uint8_t* end, bm_cbor_int_t* n) {
     if (rc != CBOR_ERR_NONE) {
         return rc;
     }
-    if (uv & (1UL << (BM_CBOR_INT_SIZE -1))) {
+    if (uv & ((bm_cbor_uint_t)1u << (BM_CBOR_INT_SIZE - 1))) {
         // Valid CBOR, but requires larger integers to decode
         RETURN_ERROR(CBOR_ERR_INTEGER_DECODE_OVERFLOW, *p);
     }
@@ -115,6 +122,9 @@ int bm_cbor_extract_primitive(
     const uint8_t *end,
     bm_cbor_value_t *val)
 {
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
+    }
     val->primitive = (**p & (~CBOR_TYPE_MASK));
     (*p)++;
     RETURN_ERROR(CBOR_ERR_NONE, *p);
@@ -126,6 +136,9 @@ int bm_cbor_check_type_extract_ref(
         bm_cbor_value_t *o_val,
         const uint8_t cbor_type
 ) {
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
+    }
     if ((**p & CBOR_TYPE_MASK) != cbor_type) {
         // BM_CBOR_ERR_PRINT("Expected: %u Actual %u\n", (unsigned) cbor_type>>5, (unsigned)(**p & CBOR_TYPE_MASK)>>5);
         //printf("Expected: %u Actual %u\n", (unsigned) cbor_type>>5, (unsigned)(**p & CBOR_TYPE_MASK)>>5);
@@ -152,6 +165,9 @@ int (*bm_cbor_extractors[])(
 
 int bm_cbor_skip(const uint8_t **p, const uint8_t *end)
 {
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
+    }
     uint8_t ct = **p & CBOR_TYPE_MASK;
     size_t handler_index = ct >> 5;
     bm_cbor_value_t val;
@@ -168,7 +184,7 @@ int bm_cbor_skip(const uint8_t **p, const uint8_t *end)
             break;
         case CBOR_TYPE_TSTR:
         case CBOR_TYPE_BSTR:
-            if ((*p) + val.ref.uival <= end) {
+            if (val.ref.uival <= (bm_cbor_uint_t)(end - *p)) {
                 (*p) += val.ref.uival;
             } else {
                 SET_ERROR(rc, CBOR_ERR_OVERRUN, *p);

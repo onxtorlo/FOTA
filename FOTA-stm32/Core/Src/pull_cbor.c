@@ -26,7 +26,6 @@
 #include <stdio.h>
 
 // TODO: Further unit tests for units below this line
-//===================================================
 
 static int get_handler(
     const uint8_t cbor_b1,
@@ -76,14 +75,8 @@ static int get_handler(
             return CBOR_ERR_NONE;
         }
     } // while (++i < handlers->count && (*h)->key == key);
-
-    // [수정] 실패 구역으로 진입하기 직전, 107번 envelope(Byte String) 규격인 경우 예외적으로 통과(버전 차이로 발생하는 에러)
-	if (key == 107 && ((cbor_b1 & CBOR_TYPE_MASK) >> 5) == 2) {
-		// 에러를 내지 않고, 파서가 다음 단계(내부 데이터)를 파싱할 수 있도록 정상 리턴(0)합니다.
-		return 0;
-    }
-
-    printf("Type Mismatch for key: %d with type %d\n", key, ((cbor_b1 & CBOR_TYPE_MASK) >> 5));
+    printf("Type Mismatch for key: %ld with type %d\n",
+           (long)key, ((cbor_b1 & CBOR_TYPE_MASK) >> 5));
     RETURN_ERROR(CBOR_ERR_TYPE_MISMATCH, NULL);
 }
 
@@ -101,6 +94,9 @@ int pull_cbor_handle_keyed_element(
     const cbor_keyed_parse_elements_t *handlers,
     int32_t key
 ) {
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
+    }
 
     // TODO: Add pre-call-function?
     // printf("parse offset: %zu, key: %" PRIi64 "\n", (size_t)((*p)-ctx->envelope.ptr), key);
@@ -115,7 +111,10 @@ int pull_cbor_handle_keyed_element(
         return rc;
     }
     // printf("Extract done\r\n");
-    uint8_t cbor_sub = **p;
+    uint8_t cbor_sub = 0;
+    if (*p < end) {
+        cbor_sub = **p;
+    }
 
     const cbor_keyed_parse_element_t *handler;
     //printf("Key: %d\n", key);
@@ -128,6 +127,11 @@ int pull_cbor_handle_keyed_element(
 
     uint8_t cbor_type = cbor_b1 & CBOR_TYPE_MASK;
     if (handler->bstr_wrap) {
+        if ((cbor_b1 & CBOR_TYPE_MASK) != CBOR_TYPE_BSTR ||
+            val.ref.ptr > end ||
+            val.ref.uival > (bm_cbor_uint_t)(end - val.ref.ptr)) {
+            RETURN_ERROR(CBOR_ERR_OVERRUN, val.ref.ptr);
+        }
         // printf("parse offset: %zu. Unwrapping BSTR\n", (size_t)((*p)-ctx->envelope.ptr));
         //printf("Unwrapping BSTR\n");
         val.cbor_start =  *p;
@@ -191,18 +195,7 @@ int pull_cbor_handle_keyed_element(
                 rc = pull_cbor_handle_pairs(p, end, ctx, children, val.ref.uival*2);
                 break;
             case CBOR_TYPE_TAG:
-                rc = pull_cbor_handle_keyed_element(p, end, ctx, children, val.ref.uival);  // 재귀 호출 때문에 주소 꼬임 (or &p)
-
-				{
-					// 현재 2중 포인터 p가 가리키고 있는 '실제 플래시 메모리 주소(싱글 포인터)'를 새로 뽑아냅니다.
-					const uint8_t *current_flash_ptr = *p;
-
-					// 하위 함수에는 이 싱글 포인터의 주소(&)를 전달하여 완벽한 2중 포인터 규격을 맞춥니다.
-					rc = pull_cbor_handle_keyed_element(&current_flash_ptr, end, ctx, children, val.ref.uival);
-
-					// 하위 함수가 전진시킨 최종 플래시 주소를 다시 원본 2중 포인터(*p)에 동기화해 줍니다.
-					*p = current_flash_ptr;
-				}
+                rc = pull_cbor_handle_keyed_element(p, end, ctx, children, val.ref.uival);
                 break;
         }
     }
@@ -302,6 +295,9 @@ int pull_cbor_process_kv(
     const cbor_keyed_parse_elements_t *handlers,
     const uint8_t type
 ) {
+    if (p == NULL || *p == NULL || *p >= end) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, p != NULL ? *p : NULL);
+    }
     // Ensure that the wrapper is a map.
     if ((**p & CBOR_TYPE_MASK) != type) {
         //printf("Expected: %u Actual %u\n", (unsigned)type >> 5, (unsigned)(**p & CBOR_TYPE_MASK) >> 5);
@@ -310,7 +306,7 @@ int pull_cbor_process_kv(
     bm_cbor_value_t val;
     int rc = bm_cbor_extract_ref(p, end, &val);
     if (rc == CBOR_ERR_NONE) {
-    			uint32_t n_keys = type == CBOR_TYPE_LIST ? val.ref.uival : val.ref.uival*2;
+        uint32_t n_keys = type == CBOR_TYPE_LIST ? val.ref.uival : val.ref.uival*2;
         rc = pull_cbor_handle_pairs(p, end, ctx, handlers, n_keys);
     }
     return rc;

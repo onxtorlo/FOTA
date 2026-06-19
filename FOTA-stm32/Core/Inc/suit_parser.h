@@ -199,7 +199,8 @@ enum {
     SUIT_MFST_ERR_VENDOR_MISMATCH,
     SUIT_MFST_ERR_CLASS_MISMATCH,
     SUIT_ERR_PARAMETER_KEY,
-
+	SUIT_ERR_IMAGE_SIZE,     // 오류 enum 추가
+	SUIT_ERR_DIGEST_FORMAT,
 };
 
 typedef struct suit_reference_t {

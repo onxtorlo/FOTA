@@ -16,6 +16,7 @@
 // limitations under the License.
 // ----------------------------------------------------------------------------
 #include "suit_platform.h"
+#include "suit_platform_stm32.h"
 #include "suit_parser.h"
 #include "pull_cbor.h"
 #include "bm_cbor.h"
@@ -106,7 +107,7 @@ static bm_cbor_value_t component_list;
 CBOR_KPARSE_ELEMENT_LIST(common_elements_component_list,
     CBOR_KPARSE_ELEMENT(SUIT_COMMON_DEPENDENCIES, CBOR_TYPE_LIST, NULL, "Dependencies"),
     CBOR_KPARSE_ELEMENT_EX(SUIT_COMMON_COMPONENTS, CBOR_TYPE_LIST, &component_list, "Components"),
-    CBOR_KPARSE_ELEMENT_C_BWRAP_KV(SUIT_COMMON_SEQUENCE, CBOR_TYPE_LIST, NULL, "common-sequence"),  // (수정) &sequence_elements
+    CBOR_KPARSE_ELEMENT_C_BWRAP_KV(SUIT_COMMON_SEQUENCE, CBOR_TYPE_LIST, NULL, "common-sequence"),
 
 );
 CBOR_KPARSE_ELEMENT_LIST(common_entry_elements_component_list,
@@ -156,7 +157,10 @@ int Signature1_val_cat(suit_parse_context_t* ctx, bm_cbor_value_t *val) {
 }
 int Signature1_ref_cat(suit_parse_context_t* ctx, suit_reference_t *ref) {
     const uint8_t *p = ref->ptr;
-    int rc = bm_cbor_skip(&p, ref->end);    
+    int rc = bm_cbor_skip(&p, ref->end);
+    if (rc != CBOR_ERR_NONE) {
+        return rc;
+    }
     size_t clen = (p - ref->ptr);
     if (ctx->Sign1.offset + clen > sizeof(ctx->Sign1.Signature1)) {
         RETURN_ERROR(SUIT_ERR_SIG, ref->ptr);
@@ -218,7 +222,6 @@ CBOR_KPARSE_ELEMENT_LIST(cose_sign1_protected,
 );
 
 PARSE_HANDLER(cose_sign1_protected_handler) {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
     int rc = Signature1_val_cat(ctx, val);
     if (rc != CBOR_ERR_NONE) {
         return rc;
@@ -276,7 +279,6 @@ PARSE_HANDLER(auth_list_handler)
 
 PARSE_HANDLER(version_handler)
 {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
     if (val->u != SUIT_SUPPORTED_VERSION) {
         RETURN_ERROR(SUIT_ERR_VERSION, *p);
     }
@@ -378,33 +380,22 @@ PARSE_HANDLER(image_match_handler)
     // int rc = suit_get_parameters(values, parameters, cbor_types, sctx);
 
     suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
-    volatile uint64_t image_size;  // 이미지 사이즈 변수 선언, volatile
+    uint64_t image_size;
     suit_reference_t *sz;
     suit_reference_t component_id;
     int rc = key_to_reference(SUIT_PARAMETER_IMAGE_SIZE, &sz, ctx);
     const uint8_t *np = sz->ptr;
-
-    printf("[*] PARSE_HANDLER(image_match_handler) called.\r\n");
-
-    // manifest binary stream에서 펌웨어 이미지 크기 추출, image_size에 저장
     rc = rc ? rc : bm_cbor_get_uint(&np, sz->end, &image_size);
-
-    // ============= [정수 오버플로우 취약점 모의 구현 패치] =============
-    image_size = 18446744073709551610ULL; // (2^64 - 6) 값 주입
-    printf("[*] Input image_size = %lu\r\n", image_size);
-
+    if (rc == CBOR_ERR_NONE) {
+        printf("[trace] image-match image_size(u64)=%llu, size_t=%lu\r\n",
+               (unsigned long long)image_size,
+               (unsigned long)(size_t)image_size);
+    }
     rc = rc ? rc : suit_get_current_component_id(&component_id, sctx);
-    printf("[*] rc = suit_get_current_component_id = %d\r\n", rc);
-
     const uint8_t *image;
     rc = rc ? rc : suit_platform_get_image_ref(&component_id, &image);
-    printf("[*] rc = suit_platform_get_image_ref = %d\r\n", rc);
-
     suit_reference_t *exp;
     rc = rc ? rc : key_to_reference(SUIT_PARAMETER_IMAGE_DIGEST, &exp, ctx);
-    printf("[*] rc = suit_platform_get_image_ref = %d\r\n", rc);
-
-    // image_size를 인자로, 플래시 메모리 영역(image)의 해시값을 계산/비교 함수(suit_check_digest) 호출
     rc = rc ? rc : suit_check_digest(exp, image, image_size);
     if (rc != CBOR_ERR_NONE) {
         bm_cbor_get_err_info()->ptr = *p;
@@ -414,8 +405,17 @@ PARSE_HANDLER(image_match_handler)
 
 //TODO: multiple components
 PARSE_HANDLER(parameter_handler) {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
     suit_reference_t *ref;
+
+    // 최초 파싱 시 이미지 크기 검증 추가
+    if (key == SUIT_PARAMETER_IMAGE_SIZE) {
+        if (val->u == 0 ||
+            val->u > (bm_cbor_uint_t)SIZE_MAX ||
+            val->u > (bm_cbor_uint_t)SUIT_MAX_IMAGE_SIZE) {
+            RETURN_ERROR(SUIT_ERR_IMAGE_SIZE, val->cbor_start);
+        }
+    }
+
     int rc = key_to_reference(key, &ref, ctx);
     if (rc != CBOR_ERR_NONE) {
         bm_cbor_get_err_info()->ptr = *p;
@@ -429,7 +429,6 @@ PARSE_HANDLER(parameter_handler) {
     *p = val->cbor_start;
     return bm_cbor_skip(p, end);
 }
-
 //TODO: This could be optimised: each parameter uses same handler, so this structure is too big
 CBOR_KPARSE_ELEMENT_LIST(parameter_handlers,
     CBOR_KPARSE_ELEMENT_H(SUIT_PARAMETER_VENDOR_ID, CBOR_TYPE_BSTR, parameter_handler, "vendor-id"),
@@ -467,7 +466,20 @@ PARSE_HANDLER(image_fetch_handler)
     if (rc != CBOR_ERR_NONE) {
         return rc;
     }
-    rc = suit_platform_do_fetch(&component_id, digest_alg.i, digest_bytes.ref.ptr, digest_bytes.ref.uival, size.u, uri.ref.ptr, uri.ref.uival);
+
+    // size.u -> size_t 타입 변환 검사
+    if (size.u == 0 ||
+        size.u > (bm_cbor_uint_t)SIZE_MAX ||
+        size.u > (bm_cbor_uint_t)SUIT_MAX_IMAGE_SIZE) {
+        RETURN_ERROR(SUIT_ERR_IMAGE_SIZE, *p);
+    }
+
+    printf("[trace] image-fetch image_size(u64)=%llu, size_t=%lu\r\n",
+           (unsigned long long)size.u,
+           (unsigned long)(size_t)size.u);
+    rc = suit_platform_do_fetch(&component_id, digest_alg.i, digest_bytes.ref.ptr,
+                                digest_bytes.ref.uival, (size_t)size.u,
+                                uri.ref.ptr, uri.ref.uival);
     if (rc != CBOR_ERR_NONE) {
         bm_cbor_get_err_info()->ptr = *p;
     }
@@ -488,7 +500,7 @@ PARSE_HANDLER(invoke_handler)
 CBOR_KPARSE_ELEMENT_LIST(sequence_elements,
     CBOR_KPARSE_ELEMENT_H(SUIT_CONDITION_VENDOR_ID, CBOR_TYPE_UINT, vendor_match_handler, "vendor-match"),
     CBOR_KPARSE_ELEMENT_H(SUIT_CONDITION_CLASS_ID, CBOR_TYPE_UINT, class_match_handler, "class-match"),
-    CBOR_KPARSE_ELEMENT_H(SUIT_CONDITION_IMAGE_MATCH, CBOR_TYPE_UINT, image_match_handler, "image-match"), // TODO: review this
+    CBOR_KPARSE_ELEMENT_H(SUIT_CONDITION_IMAGE_MATCH, CBOR_TYPE_UINT, NULL, "image-match"), // TODO: review this
     // CBOR_KPARSE_ELEMENT(SUIT_DIRECTIVE_SET_COMP_IDX, CBOR_TYPE_UINT, set_component_handler),
     CBOR_KPARSE_ELEMENT_C(SUIT_DIRECTIVE_SET_PARAMETERS, CBOR_TYPE_MAP, &parameter_handlers, "set-parameters"),
     CBOR_KPARSE_ELEMENT_C(SUIT_DIRECTIVE_OVERRIDE_PARAMETERS, CBOR_TYPE_MAP, &parameter_handlers, "override-parameters"),
@@ -523,7 +535,6 @@ PARSE_HANDLER(suit_sequence_handler) {
 
 // Text entry handler
 PARSE_HANDLER(text_handler) {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
     // Verify it's a list with algorithm and digest bytes
     if (val->ref.uival != 2) { // Should have 2 elements: algorithm-id and digest-bytes
         bm_cbor_get_err_info()->ptr = *p;
@@ -593,10 +604,13 @@ PARSE_HANDLER(cert_man_language_handler) {
 }
 
 PARSE_HANDLER(cert_man_proof_cert_handler) {
-    printf("Proof Certificate: ");
-    for(size_t i = 0; i < val->ref.uival; i++) {
-        printf("%c", val->ref.ptr[i]);
-    }
+//    printf("Proof Certificate: ");
+//    for(size_t i = 0; i < val->ref.uival; i++) {
+//        printf("%c", val->ref.ptr[i]);
+//    }
+
+	printf("Proof Certificate: [omitted, %lu bytes]\n", (unsigned long)val->ref.uival);
+
     *p = val->ref.ptr + val->ref.uival;
     printf("\n");
     return 0;
@@ -639,8 +653,6 @@ PARSE_HANDLER(cert_man_component_handler) {
 PARSE_HANDLER(cert_man_verification_servers_handler) {
     // Get the list item count to parse through
     const uint8_t *ptr = val->ref.ptr;
-    const uint8_t *end_ptr = val->ref.ptr + val->ref.uival;
-    
     //printf("ptr: %p, end: %p\n", ptr, end_ptr);
 
     // Parse each map in the list
@@ -700,8 +712,6 @@ CBOR_KPARSE_ELEMENT_LIST(cert_manifest_elements,
 
 
 PARSE_HANDLER(cert_manifest_handler) {
-    suit_parse_context_t *sctx = (suit_parse_context_t *)ctx;
-
     const uint8_t list_size = val->ref.uival;
     printf("Number of certification manifest entry: %lu\n", (unsigned long)list_size);
     
@@ -736,7 +746,7 @@ PARSE_HANDLER(cert_manifest_handler) {
 
 CBOR_KPARSE_ELEMENT_LIST(manifest_elements,
     CBOR_KPARSE_ELEMENT_H(SUIT_MANIFEST_VERSION, CBOR_TYPE_UINT, version_handler, "SUIT Structure Version"),
-    CBOR_KPARSE_ELEMENT_H(SUIT_MANIFEST_SEQUCENCE_NUMBER, CBOR_TYPE_UINT, NULL, "SUIT Sequence Number"),  // (수정) vs_seq_num_handler
+    CBOR_KPARSE_ELEMENT_H(SUIT_MANIFEST_SEQUCENCE_NUMBER, CBOR_TYPE_UINT, NULL, "SUIT Sequence Number"),
     CBOR_KPARSE_ELEMENT_H(SUIT_MANIFEST_COMMON, CBOR_TYPE_BSTR, suit_common_handler, "SUIT Common"),
     CBOR_KPARSE_ELEMENT_H_BWRAP(SUIT_MANIFEST_INSTALL, CBOR_TYPE_LIST, &suit_sequence_handler, "Install sequence"),
     CBOR_KPARSE_ELEMENT_H_BWRAP(SUIT_MANIFEST_VALIDATE, CBOR_TYPE_LIST, &suit_sequence_handler, "Validate sequence"),
@@ -779,7 +789,20 @@ CBOR_KPARSE_ELEMENT_LIST(tag_or_envelope,
     CBOR_KPARSE_ELEMENT_C(0, CBOR_TYPE_TAG, &outer_tag_elements, "Outer Tag"),
 );
 
+
 int suit_do_process_manifest(const uint8_t *manifest, size_t manifest_size) {
+    bm_cbor_err_info_t *err = bm_cbor_get_err_info();
+    err->ptr = manifest;
+    err->cbor_err = CBOR_ERR_NONE;
+#if BM_CBOR_ERR_INFO_DGB != 0
+    err->line = 0;
+    err->file = NULL;
+#endif
+
+    if (manifest == NULL || manifest_size == 0) {
+        RETURN_ERROR(CBOR_ERR_OVERRUN, manifest);
+    }
+
     suit_parse_context_t sctx = {0};
     sctx.envelope.ptr = manifest;
     sctx.envelope.end = manifest + manifest_size;
@@ -789,12 +812,6 @@ int suit_do_process_manifest(const uint8_t *manifest, size_t manifest_size) {
     // int rc = pull_cbor_process_kv(
     //     &p, end, &sctx, &envelope_handlers.elements, CBOR_TYPE_MAP
     // );
-
-    // rc 값에 상관없이 무조건 image_match_handler를 호출
-    // 앞의 3개 인자는 정상 전달, 뒤쪽 타입이 꼬이는 인자들은 NULL로 전달
-    image_match_handler(&p, end, &sctx, NULL, 0, NULL);
-    printf("[*] suit_do_process_manifest() return: rc = %d \r\n", rc);
-
     return rc;
 }
 
